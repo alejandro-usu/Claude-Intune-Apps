@@ -6,7 +6,8 @@ Each app folder has an app.json manifest:
     {
       "name": "Display name",
       "version": "1.2.3",
-      "setupFile": "Install.ps1",          file in source/ that Intune runs
+      "setupFile": "Install.ps1",          file Intune runs: a script in source/, or one of
+                                            the downloads when its command line is enough
       "downloads": [                        installers to fetch into the package
         {"url": "https://...", "sha256": "...", "file": "optional-name.exe"}
       ]
@@ -15,11 +16,11 @@ Each app folder has an app.json manifest:
 For each app, this script:
   1. downloads every file in "downloads" into .cache/downloads/ (reused on later runs)
      and stops if a SHA-256 doesn't match
-  2. stages source/ plus the downloads in out/<app>/staging/
+  2. stages source/ (optional) plus the downloads in out/<app>/staging/
   3. writes out/<app>/<setupFile stem>.intunewin and verifies it
 
 Usage:
-    python3 tools/build.py PyCharm-Python      build one app (folder name under apps/)
+    python3 tools/build.py PyCharm             build one app (folder name under apps/)
     python3 tools/build.py --all               build every app
     python3 tools/build.py --list              list apps and versions
     python3 tools/build.py --check             validate every manifest, download nothing
@@ -61,9 +62,6 @@ def load_manifest(app):
     for key in ("name", "version", "setupFile"):
         if not isinstance(manifest.get(key), str) or not manifest[key]:
             errors.append(f'"{key}" must be a non-empty string')
-    setup = manifest.get("setupFile")
-    if isinstance(setup, str) and not os.path.isfile(os.path.join(app_dir, "source", setup)):
-        errors.append(f'setupFile "{setup}" is not in source/')
     names = set()
     for i, dl in enumerate(manifest.get("downloads", [])):
         if not str(dl.get("url", "")).startswith("https://"):
@@ -74,6 +72,9 @@ def load_manifest(app):
         if name in names or os.path.exists(os.path.join(app_dir, "source", name)):
             errors.append(f"downloads[{i}] file name '{name}' clashes with another file")
         names.add(name)
+    setup = manifest.get("setupFile")
+    if isinstance(setup, str) and setup not in names and not os.path.isfile(os.path.join(app_dir, "source", setup)):
+        errors.append(f'setupFile "{setup}" is neither in source/ nor one of the downloads')
     if "<" in json.dumps(manifest) or "0" * 64 in json.dumps(manifest):
         errors.append("still has template placeholders (<...> or an all-zero sha256)")
     if errors:
@@ -128,7 +129,11 @@ def build(app):
     app_out = os.path.join(OUT, app)
     staging = os.path.join(app_out, "staging")
     shutil.rmtree(app_out, ignore_errors=True)
-    shutil.copytree(os.path.join(APPS, app, "source"), staging)
+    source = os.path.join(APPS, app, "source")
+    if os.path.isdir(source):
+        shutil.copytree(source, staging)
+    else:
+        os.makedirs(staging)
     for dl in manifest.get("downloads", []):
         link_or_copy(fetch(dl), os.path.join(staging, download_name(dl)))
 

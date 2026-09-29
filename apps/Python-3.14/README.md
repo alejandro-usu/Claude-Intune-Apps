@@ -1,0 +1,104 @@
+# Python 3.14.7 (Intune Win32 app)
+
+Installs 64-bit Python 3.14.7 for all users in `C:\Program Files\Python314`, adds it to the
+system PATH, and installs the `py` launcher. Other apps can depend on it, such as
+[PyCharm](../PyCharm/).
+
+There are no scripts. Intune runs the Python installer directly, since its command-line options
+cover everything and its exit codes are the standard ones Intune already understands.
+
+| Component | Source | SHA-256 |
+|---|---|---|
+| `python-3.14.7-amd64.exe` | https://www.python.org/ftp/python/3.14.7/python-3.14.7-amd64.exe | `9d9eb2709ef81bf5cd30db3c2096bdbc4ea10087c22e62f27d356b36f6ae9649` |
+
+The hash matches the `sha256_sum` python.org publishes for this file.
+
+## Build the package
+
+```sh
+python3 tools/build.py Python-3.14
+# -> out/Python-3.14/python-3.14.7-amd64.intunewin
+```
+
+GitHub Actions also builds it whenever a push changes this folder, and publishes it as the
+**Python-3.14-3.14.7** artifact. See the [repo README](../../README.md).
+
+## Intune app settings
+
+| Setting | Value |
+|---|---|
+| App type | Windows app (Win32) |
+| Package file | `python-3.14.7-amd64.intunewin` |
+| Name | Python 3.14.7 |
+| Publisher | Python Software Foundation |
+| Install command | `python-3.14.7-amd64.exe /quiet InstallAllUsers=1 TargetDir="C:\Program Files\Python314" PrependPath=1 Include_launcher=1 InstallLauncherAllUsers=1 Include_test=0 /log "C:\ProgramData\Microsoft\IntuneManagementExtension\Logs\Python-3.14.7-Install.log"` |
+| Uninstall command | `python-3.14.7-amd64.exe /quiet /uninstall /log "C:\ProgramData\Microsoft\IntuneManagementExtension\Logs\Python-3.14.7-Uninstall.log"` |
+| Install behavior | System |
+| Device restart behavior | Determine behavior based on return codes |
+| Return codes | defaults |
+| OS architecture | x64 |
+| Minimum OS | Windows 10 21H2 or later |
+| Disk space required | 500 MB |
+| Detection rules | Registry rule, below |
+
+### Detection rule
+
+| Field | Value |
+|---|---|
+| Rule type | Registry |
+| Key path | `HKEY_LOCAL_MACHINE\SOFTWARE\Python\PythonCore\3.14` |
+| Value name | `Version` (Intune doesn't require this field, but leave it blank and the rule checks the key's empty default value, so detection fails even though Python installed) |
+| Detection method | String comparison |
+| Operator | Equals |
+| Value | `3.14.7` |
+| Associated with a 32-bit app on 64-bit clients | No |
+
+The installer writes this key for all-users installs (PEP 514).
+
+### What the install options do
+
+| Option | Effect |
+|---|---|
+| `/quiet` | No UI |
+| `InstallAllUsers=1` | Installs for everyone, not just the account running it |
+| `TargetDir="C:\Program Files\Python314"` | The folder PyCharm is configured to use. Patch releases install to the same folder. |
+| `PrependPath=1` | Adds Python and its `Scripts` folder to the system PATH |
+| `Include_launcher=1 InstallLauncherAllUsers=1` | Installs the `py` launcher for all users |
+| `Include_test=0` | Leaves out the standard library's test suite |
+| `/log "..."` | Writes the installer log where Intune's "Collect diagnostics" picks it up |
+
+pip, file associations and Start menu shortcuts are included by default.
+
+## Updating to a new 3.14 patch release
+
+Patch releases install over this one in the same folder, so apps that point at
+`C:\Program Files\Python314\python.exe` keep working. To update:
+1. Change the URL, hash, version and `setupFile` in `app.json`.
+2. Build it, and add it to Intune as a new app with the new file name and version in the
+   commands and detection rule.
+3. Set it to supersede this app, with **Uninstall previous version** set to **No**.
+
+## Future: Python 3.16 and the install manager
+
+Checked September 2026 against [PEP 773](https://peps.python.org/pep-0773/) and the
+[Python 3.14 Windows docs](https://docs.python.org/3.14/using/windows.html):
+
+- The installer this app uses is deprecated since 3.14 and "will not be produced for Python
+  3.16 or later". Python 3.15 still ships it (3.15.0rc2 has `python-3.15.0rc2-amd64.exe`).
+- Its replacement, the Python install manager (`py install`), "does not support installing
+  runtimes per-machine". It installs Python separately for each signed-in user. The docs
+  suggest emulating a per-machine install by running `py install --target=<shared location>`
+  as an administrator and adding PATH, registry and Start menu entries yourself.
+- The `py` launcher this app installs (`Include_launcher=1`) is deprecated too; the install
+  manager replaces it.
+
+So this app can stay as it is through Python 3.15. For 3.16, it will likely become a scripted
+app: install the install manager, run `py install --target="C:\Program Files\Python316"` as
+SYSTEM, and add PATH and detection by hand. Keeping a fixed path means
+[PyCharm](../PyCharm/)'s default-interpreter setup keeps working. Check the docs again before
+then, since machine-wide support may improve.
+
+## Uninstall
+
+The uninstall command runs the same installer with `/uninstall`. Packages installed with pip
+into `C:\Program Files\Python314` go with it. Apps that depend on Python stay installed.

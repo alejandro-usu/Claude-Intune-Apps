@@ -2,6 +2,10 @@
 
 One or two sentences on what this installs and anything it configures.
 
+<!-- For an app without scripts: set the install and uninstall commands to the installer's own
+command line, use a built-in detection rule instead of Detect.ps1, and delete source/ and
+Detect.ps1. See apps/Python-3.14/README.md. -->
+
 | Component | Source | SHA-256 |
 |---|---|---|
 | `example-<VERSION>-x64.msi` | https://vendor.example.com/downloads/example-<VERSION>-x64.msi | `<sha256>` |

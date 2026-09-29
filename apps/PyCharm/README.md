@@ -1,0 +1,168 @@
+# PyCharm 2026.2.3 (Intune Win32 app)
+
+Installs PyCharm 2026.2.3 for all users and makes Python 3.14 the default interpreter in
+PyCharm for every user on the device. Users don't see PyCharm's first-run User Agreement or
+Data Sharing dialogs, or the Windows Firewall prompt.
+
+Python comes from the separate [Python 3.14](../Python-3.14/) app. Set it up as a dependency
+(below), so Intune installs Python first.
+
+| Component | Source | SHA-256 |
+|---|---|---|
+| `pycharm-2026.2.3.exe` (build 262.10968.92) | https://download.jetbrains.com/python/pycharm-2026.2.3.exe | `f47b0e48ce06a903b94245bbe8a312f2196205a12264ee47b0cf1595a1443362` |
+
+The hash matches JetBrains' published `pycharm-2026.2.3.exe.sha256`.
+
+## Build the package
+
+```sh
+python3 tools/build.py PyCharm
+# -> out/PyCharm/Install.intunewin
+```
+
+GitHub Actions also builds it whenever a push changes this folder, and publishes it as the
+**PyCharm-2026.2.3** artifact. See the [repo README](../../README.md).
+
+## Intune app settings
+
+| Setting | Value |
+|---|---|
+| App type | Windows app (Win32) |
+| Package file | `Install.intunewin` |
+| Name | PyCharm 2026.2.3 |
+| Publisher | JetBrains |
+| Install command | `%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Install.ps1` |
+| Uninstall command | `%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Uninstall.ps1` |
+| Install behavior | System |
+| Device restart behavior | Determine behavior based on return codes |
+| Return codes | defaults |
+| OS architecture | x64 |
+| Minimum OS | Windows 10 21H2 or later (PyCharm 2026.2 requires 64-bit Windows 10+) |
+| Disk space required | 4,000 MB |
+| Detection rules | Custom script: [`Detect.ps1`](Detect.ps1), "Run script as 32-bit process" = **No** |
+| Dependencies | **Python 3.14.7**, set to **Automatically install** |
+
+Logs, in `C:\ProgramData\Microsoft\IntuneManagementExtension\Logs\`:
+- `PyCharm-2026.2.3-Install.log` and `PyCharm-2026.2.3-Uninstall.log` from the scripts
+- `PyCharm-2026.2.3-Setup.log` from the PyCharm installer
+
+### Dependency on Python 3.14
+
+1. Add the [Python 3.14](../Python-3.14/) app to Intune first.
+2. In this app, go to **Dependencies → Add** and pick Python 3.14.7.
+3. Set **Automatically install** to **Yes**.
+
+Intune then installs Python before PyCharm, and assigning PyCharm is enough; you don't need
+to assign Python separately. Uninstalling PyCharm leaves Python installed.
+
+If Python is missing when PyCharm installs, the install still succeeds and logs a warning,
+but users don't get Python 3.14 as their default interpreter. Active Setup only runs once per
+user, so installing Python later doesn't fix that. You'd need to bump `$ActiveSetupVersion`
+in `Install.ps1` and redeploy.
+
+A Python patch release (for example 3.14.8) installs to the same `C:\Program Files\Python314`,
+so only the Python app needs updating. Moving to Python 3.15 changes the path, so update both
+apps then.
+
+### Moving from the combined "PyCharm 2026.2.3 with Python 3.14.7" app
+
+Devices that have the earlier combined package already have everything these two apps install.
+To switch without reinstalling anything:
+
+1. Add the Python 3.14.7 and PyCharm 2026.2.3 apps, with the dependency above.
+2. In the PyCharm app, go to **Supersedence → Add**, pick the combined app, and set
+   **Uninstall previous version** to **No**.
+3. Assign the PyCharm app where the combined app was assigned, then remove the combined app's
+   assignments.
+
+On devices with the latest combined package (`-2`, which added the first-run prompt
+handling), both new detection rules pass, so Intune just marks the apps as installed.
+Devices that still have the very first combined package get PyCharm reinstalled once, which
+picks up the first-run prompt handling. Don't uninstall the combined app: its uninstall
+removes PyCharm and Python.
+
+## What the install does
+
+[`source/Install.ps1`](source/Install.ps1), running as SYSTEM:
+
+1. **PyCharm 2026.2.3**: `pycharm-2026.2.3.exe /S /CONFIG=silent.config /D=C:\Program Files\JetBrains\PyCharm 2026.2.3`.
+   [`silent.config`](source/silent.config) sets `mode=admin` (all users) and turns off the desktop
+   shortcut, PATH change, context menu entry and `.py` association.
+2. **Firewall**: adds an inbound rule for `bin\pycharm64.exe` (group `PyCharm 2026.2.3`), so
+   Windows doesn't ask users whether to let PyCharm through. The rule **blocks** by default.
+   PyCharm's own features (debugger, built-in web server) talk over localhost, which Windows
+   Firewall doesn't filter, so they still work. Set `$FirewallAction = 'Allow'` in
+   `Install.ps1` if users need to reach PyCharm from another computer.
+3. **Per-user defaults, future logons**: copies
+   [`Set-PyCharmUserDefaults.ps1`](source/Set-PyCharmUserDefaults.ps1) to
+   `C:\Program Files\JetBrains\PyCharm-Python-Defaults\` (only admins can write there) and
+   registers it with **Active Setup**, so Windows runs it once for each user at their next logon.
+4. **Per-user defaults, now**: runs the same script as SYSTEM against every existing profile
+   under `C:\Users`, so users who are already signed in don't need to log off.
+
+If the script is invoked on a 32-bit PowerShell (which the Intune Management Extension can
+do), it relaunches itself as 64-bit so `Program Files` and `HKLM` aren't redirected.
+
+## First-run prompts
+
+`Set-PyCharmUserDefaults.ps1` stores the same answers PyCharm saves when a user clicks through
+its first-run dialogs. The locations and formats were confirmed in the 2026.2.3 build
+(`EndUserAgreement`, `ConsentOptions`, `com.intellij.ide.Prefs`).
+
+| Prompt | What the script sets |
+|---|---|
+| JetBrains User Agreement | `HKCU\Software\JavaSoft\Prefs\jetbrains\privacy_policy`, value `eua_accepted_version` = `2.0`. PyCharm 2026.2 ships version 2.0 of the agreement; if a later build ships a newer one, users are asked again until `-AgreementVersion` is updated. |
+| Data Sharing | Adds `rsch.send.usage.stat:1.1:0:<time>` ("Don't Send") to `%APPDATA%\JetBrains\consentOptions\accepted`. All JetBrains IDEs share this file, so an answer the user already gave is left alone. Pass `-UsageStatistics Allow` to opt in instead. |
+
+Accepting the User Agreement this way accepts it on each user's behalf. Make sure your
+organization is comfortable with that under its JetBrains licensing terms.
+
+The registry part needs the user's registry hive. For users who are signed in during install,
+it is loaded under `HKEY_USERS`, and the SYSTEM pass writes there. Everyone else gets it from
+Active Setup at their next logon, before they can start PyCharm.
+
+## How the default interpreter is set
+
+PyCharm has no machine-wide interpreter setting. Interpreters live in each user's config
+folder, `%APPDATA%\JetBrains\PyCharm2026.2\options\`. `Set-PyCharmUserDefaults.ps1` writes
+three files there:
+
+| File | What the script sets |
+|---|---|
+| `jdk.table.xml` | Adds a `Python SDK` entry named **Python 3.14** for `C:\Program Files\Python314\python.exe` (flavor `WinPythonSdkFlavor`). If an entry for that `python.exe` already exists, it reuses that entry. If another interpreter already uses the name, it picks `Python 3.14 (2)`. |
+| `project.default.xml` | Points the default project's `ProjectRootManager` at that SDK, so new projects and projects opened without an interpreter get Python 3.14.7. |
+| `pySdk.xml` | Sets `PySdkSettings.PREFERRED_VIRTUALENV_BASE_SDK` to that `python.exe`, so the New Project wizard picks Python 3.14.7 as the base interpreter when it creates a new venv. |
+
+It edits these files in place and keeps the rest of their contents. Running it again changes
+nothing.
+
+**Keeping settings from older PyCharm versions.** The first time a user starts PyCharm 2026.2,
+it offers to import settings from their previous version (for example `PyCharm2026.1`). Two
+details of that import, confirmed in the 2026.2.3 build (`ConfigImportHelper`, `InitialConfigImportState`):
+
+- PyCharm only treats the config folder as already set up, and skips the import, when
+  `options\other.xml`, `options\ide.general.xml` or `options\options.xml` exists. The script
+  never writes those files, so the import still happens.
+- During the import, PyCharm skips any file that already exists in the new folder. On its own,
+  that would mean the user's older interpreter list and new-project defaults were not brought
+  across. So when the 2026.2 folder hasn't been set up yet, the script starts from the newest
+  older `PyCharm*`/`PyCharmCE*` copy of each file and then adds Python 3.14.7. The user keeps
+  their old interpreters and also gets the new default.
+
+**Caveats**
+
+- If PyCharm is running while the SYSTEM pass edits a user's files, PyCharm overwrites them
+  when it exits. Active Setup runs at logon, before PyCharm can start, so it covers anyone
+  this affects at their next logon. To make Active Setup run again for everyone, bump
+  `$ActiveSetupVersion` in `Install.ps1`.
+- With folder redirection of `AppData\Roaming`, the SYSTEM pass writes to the local profile
+  path. Active Setup still writes to the user's real `%APPDATA%` at their next logon.
+- Existing projects keep whatever interpreter they already use. The default only applies to
+  new projects.
+
+## Uninstall
+
+[`source/Uninstall.ps1`](source/Uninstall.ps1) stops PyCharm, runs `bin\Uninstall.exe /S` and
+waits for it to finish, then removes the firewall rule, the Active Setup entry and the defaults
+script. Python 3.14 stays installed, and users' own PyCharm settings in `%APPDATA%` are left
+alone.
