@@ -64,23 +64,6 @@ A Python patch release (for example 3.14.8) installs to the same `C:\Program Fil
 so only the Python app needs updating. Moving to Python 3.15 changes the path, so update both
 apps then.
 
-### Moving from the combined "PyCharm 2026.2.3 with Python 3.14.7" app
-
-Devices that have the earlier combined package already have everything these two apps install.
-To switch without reinstalling anything:
-
-1. Add the Python 3.14.7 and PyCharm 2026.2.3 apps, with the dependency above.
-2. In the PyCharm app, go to **Supersedence → Add**, pick the combined app, and set
-   **Uninstall previous version** to **No**.
-3. Assign the PyCharm app where the combined app was assigned, then remove the combined app's
-   assignments.
-
-On devices with the latest combined package (`-2`, which added the first-run prompt
-handling), both new detection rules pass, so Intune just marks the apps as installed.
-Devices that still have the very first combined package get PyCharm reinstalled once, which
-picks up the first-run prompt handling. Don't uninstall the combined app: its uninstall
-removes PyCharm and Python.
-
 ## What the install does
 
 [`source/Install.ps1`](source/Install.ps1), running as SYSTEM:
