@@ -12,6 +12,17 @@ Both hashes match what python.org and JetBrains publish.
 
 ## Build the package
 
+### With GitHub Actions
+
+[`.github/workflows/build-pycharm-python.yml`](../.github/workflows/build-pycharm-python.yml) builds
+the package whenever a push changes it. To run it by hand, open **Actions → Build PyCharm 2026.2.3 +
+Python 3.14.7 package → Run workflow**. The button only appears once the workflow is on the default
+branch. When the run finishes, download the **Install.intunewin** artifact from the run page. GitHub
+wraps it in a .zip, so extract it before uploading to Intune. The run summary shows the package's
+SHA-256. Artifacts are kept for 14 days.
+
+### Locally
+
 The installers (about 1 GB) and the `.intunewin` are too large for git, so `build.py`
 downloads them, checks their hashes, and builds the package:
 
