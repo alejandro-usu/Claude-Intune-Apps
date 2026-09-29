@@ -47,7 +47,7 @@ GitHub Actions also builds it whenever a push changes this folder, and publishes
 |---|---|
 | Rule type | Registry |
 | Key path | `HKEY_LOCAL_MACHINE\SOFTWARE\Python\PythonCore\3.14` |
-| Value name | `Version` |
+| Value name | `Version` (Intune doesn't require this field, but leave it blank and the rule checks the key's empty default value, so detection fails even though Python installed) |
 | Detection method | String comparison |
 | Operator | Equals |
 | Value | `3.14.7` |
