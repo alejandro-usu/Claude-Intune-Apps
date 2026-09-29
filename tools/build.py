@@ -19,7 +19,7 @@ For each app, this script:
   3. writes out/<app>/<setupFile stem>.intunewin and verifies it
 
 Usage:
-    python3 tools/build.py PyCharm-Python      build one app (folder name under apps/)
+    python3 tools/build.py PyCharm             build one app (folder name under apps/)
     python3 tools/build.py --all               build every app
     python3 tools/build.py --list              list apps and versions
     python3 tools/build.py --check             validate every manifest, download nothing

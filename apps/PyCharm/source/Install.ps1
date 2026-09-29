@@ -1,22 +1,23 @@
 <#
 .SYNOPSIS
-    Intune Win32 install script: Python 3.14.7 + PyCharm 2026.2.3, with Python 3.14.7 set
-    as PyCharm's default interpreter and PyCharm's first-run prompts pre-answered.
+    Intune Win32 install script: PyCharm 2026.2.3, with Python 3.14 set as PyCharm's default
+    interpreter and PyCharm's first-run prompts pre-answered.
 
 .DESCRIPTION
-    Runs as SYSTEM. Steps:
-      1. Install Python 3.14.7 for all users (C:\Program Files\Python314, on PATH, py launcher).
-      2. Install PyCharm 2026.2.3 for all users (C:\Program Files\JetBrains\PyCharm 2026.2.3).
-      3. Add a Windows Firewall rule for pycharm64.exe, so Windows doesn't ask each user
+    Runs as SYSTEM. Python 3.14 is a separate Intune app, which this one depends on, so Intune
+    installs it first. Steps:
+      1. Install PyCharm 2026.2.3 for all users (C:\Program Files\JetBrains\PyCharm 2026.2.3).
+      2. Add a Windows Firewall rule for pycharm64.exe, so Windows doesn't ask each user
          whether to let PyCharm through the firewall.
-      4. Copy Set-PyCharmUserDefaults.ps1 to an admin-only folder and register it with
+      3. Copy Set-PyCharmUserDefaults.ps1 to an admin-only folder and register it with
          Active Setup, so it runs once for every user at their next logon. It accepts the
          JetBrains User Agreement, declines anonymous usage statistics and sets the default
          interpreter.
-      5. Run Set-PyCharmUserDefaults.ps1 now for every existing user profile, so users who are
+      4. Run Set-PyCharmUserDefaults.ps1 now for every existing user profile, so users who are
          already signed in get the settings without logging off.
 
-    Log: C:\ProgramData\Microsoft\IntuneManagementExtension\Logs\PyCharm-2026.2.3-Python-3.14.7-Install.log
+    Logs: C:\ProgramData\Microsoft\IntuneManagementExtension\Logs\PyCharm-2026.2.3-Install.log
+          (this script) and PyCharm-2026.2.3-Setup.log (the PyCharm installer)
 #>
 $ErrorActionPreference = 'Stop'
 
@@ -28,10 +29,9 @@ if ([Environment]::Is64BitOperatingSystem -and -not [Environment]::Is64BitProces
     exit $LASTEXITCODE
 }
 
+# Installed by the Python 3.14 app. Patch releases keep this path.
 $PythonVersion = '3.14.7'
-$PythonInstaller = Join-Path $PSScriptRoot 'python-3.14.7-amd64.exe'
-$PythonDir = Join-Path $env:ProgramFiles 'Python314'
-$PythonExe = Join-Path $PythonDir 'python.exe'
+$PythonExe = Join-Path $env:ProgramFiles 'Python314\python.exe'
 
 $PyCharmInstaller = Join-Path $PSScriptRoot 'pycharm-2026.2.3.exe'
 $PyCharmDir = Join-Path $env:ProgramFiles 'JetBrains\PyCharm 2026.2.3'
@@ -51,7 +51,7 @@ $FirewallGroup = 'PyCharm 2026.2.3'
 
 $LogDir = Join-Path $env:ProgramData 'Microsoft\IntuneManagementExtension\Logs'
 New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
-Start-Transcript -Path (Join-Path $LogDir 'PyCharm-2026.2.3-Python-3.14.7-Install.log') -Append | Out-Null
+Start-Transcript -Path (Join-Path $LogDir 'PyCharm-2026.2.3-Install.log') -Append | Out-Null
 
 function Invoke-Installer([string]$FilePath, [string]$Arguments, [int[]]$SuccessCodes = @(0)) {
     # Write-Host, not Write-Output: this function's output is its exit code. The transcript still logs it.
@@ -66,41 +66,29 @@ function Invoke-Installer([string]$FilePath, [string]$Arguments, [int[]]$Success
 
 $exitCode = 0
 try {
-    # --- 1. Python ----------------------------------------------------------------------------
-    $pythonArgs = @(
-        '/quiet'
-        'InstallAllUsers=1'
-        "TargetDir=`"$PythonDir`""
-        'PrependPath=1'
-        'AssociateFiles=1'
-        'Shortcuts=1'
-        'Include_launcher=1'
-        'InstallLauncherAllUsers=1'
-        'Include_pip=1'
-        'Include_test=0'
-        "/log `"$(Join-Path $LogDir 'Python-3.14.7-Install.log')`""
-    ) -join ' '
-    $pythonExit = Invoke-Installer $PythonInstaller $pythonArgs @(0, 1641, 3010)
-    if ($pythonExit -in 1641, 3010) { $exitCode = 3010 }
-    if (-not (Test-Path -LiteralPath $PythonExe)) { throw "Python install finished but '$PythonExe' is missing" }
+    # The dependency rule should have installed Python first. Without it, PyCharm still
+    # installs; users just don't get Python 3.14 as their default interpreter.
+    if (-not (Test-Path -LiteralPath $PythonExe)) {
+        Write-Warning "Python not found at '$PythonExe'. Check the app's dependency on Python 3.14."
+    }
 
-    # --- 2. PyCharm ---------------------------------------------------------------------------
+    # --- 1. PyCharm ---------------------------------------------------------------------------
     # NSIS rule: /D= must come last and must not be quoted, even when the path has spaces.
     $pycharmArgs = "/S /CONFIG=`"$(Join-Path $PSScriptRoot 'silent.config')`" " +
-        "/LOG=`"$(Join-Path $LogDir 'PyCharm-2026.2.3-Install.log')`" /D=$PyCharmDir"
+        "/LOG=`"$(Join-Path $LogDir 'PyCharm-2026.2.3-Setup.log')`" /D=$PyCharmDir"
     [void](Invoke-Installer $PyCharmInstaller $pycharmArgs)
     if (-not (Test-Path -LiteralPath (Join-Path $PyCharmDir 'bin\pycharm64.exe'))) {
         throw "PyCharm install finished but '$PyCharmDir\bin\pycharm64.exe' is missing"
     }
 
-    # --- 3. Firewall -------------------------------------------------------------------------
+    # --- 2. Firewall -------------------------------------------------------------------------
     Get-NetFirewallRule -Group $FirewallGroup -ErrorAction SilentlyContinue | Remove-NetFirewallRule
     New-NetFirewallRule -DisplayName 'PyCharm 2026.2.3' -Group $FirewallGroup `
         -Program (Join-Path $PyCharmDir 'bin\pycharm64.exe') -Direction Inbound `
         -Action $FirewallAction -Profile Any | Out-Null
     Write-Output "Firewall: inbound $FirewallAction rule added for pycharm64.exe"
 
-    # --- 4. Per-user defaults via Active Setup ------------------------------------------------
+    # --- 3. Per-user defaults via Active Setup ------------------------------------------------
     New-Item -ItemType Directory -Path $DefaultsDir -Force | Out-Null
     # Remove the script's earlier name from older installs of this package.
     Remove-Item -LiteralPath (Join-Path $DefaultsDir 'Set-PyCharmInterpreter.ps1') -Force -ErrorAction SilentlyContinue
@@ -114,7 +102,7 @@ try {
     Set-ItemProperty -Path $ActiveSetupKey -Name 'Version' -Value $ActiveSetupVersion
     Set-ItemProperty -Path $ActiveSetupKey -Name 'IsInstalled' -Value 1 -Type DWord
 
-    # --- 5. Existing profiles, now -----------------------------------------------------------
+    # --- 4. Existing profiles, now -----------------------------------------------------------
     $profileList = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList'
     foreach ($entry in Get-ChildItem -Path $profileList) {
         # Local/domain accounts (S-1-5-21-*) and Entra ID accounts (S-1-12-1-*).

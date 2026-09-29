@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
     inputs:
       app:
-        description: App folder under apps/ (e.g. PyCharm-Python), or "all"
+        description: App folder under apps/ (e.g. PyCharm), or "all"
         required: true
         default: all
 

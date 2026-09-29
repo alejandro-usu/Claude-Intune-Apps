@@ -8,7 +8,8 @@ the `.intunewin`. Installers and packages are never committed.
 
 | Folder | Installs |
 |---|---|
-| [PyCharm-Python](apps/PyCharm-Python/) | PyCharm 2026.2.3 + Python 3.14.7, with Python 3.14.7 as PyCharm's default interpreter |
+| [Python-3.14](apps/Python-3.14/) | Python 3.14.7, all users, on PATH, with the `py` launcher |
+| [PyCharm](apps/PyCharm/) | PyCharm 2026.2.3, with Python 3.14 as the default interpreter and first-run prompts pre-answered. Depends on Python-3.14. |
 
 ## Layout
 
@@ -61,7 +62,7 @@ Needs Python 3.9+ and `pip install cryptography`.
 
 ```sh
 python3 tools/build.py --list              # apps and versions
-python3 tools/build.py PyCharm-Python      # -> out/PyCharm-Python/Install.intunewin
+python3 tools/build.py PyCharm             # -> out/PyCharm/Install.intunewin
 python3 tools/build.py --all
 python3 tools/build.py --check             # validate every app.json, no downloads
 ```

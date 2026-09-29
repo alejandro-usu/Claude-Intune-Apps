@@ -1,30 +1,27 @@
-# PyCharm 2026.2.3 + Python 3.14.7 (Intune Win32 app)
+# PyCharm 2026.2.3 (Intune Win32 app)
 
-Installs Python 3.14.7 and PyCharm 2026.2.3 for all users, and makes Python 3.14.7 the
-default interpreter in PyCharm for every user on the device. Users don't see PyCharm's
-first-run User Agreement or Data Sharing dialogs, or the Windows Firewall prompt.
+Installs PyCharm 2026.2.3 for all users and makes Python 3.14 the default interpreter in
+PyCharm for every user on the device. Users don't see PyCharm's first-run User Agreement or
+Data Sharing dialogs, or the Windows Firewall prompt.
+
+Python comes from the separate [Python 3.14](../Python-3.14/) app. Set it up as a dependency
+(below), so Intune installs Python first.
 
 | Component | Source | SHA-256 |
 |---|---|---|
-| `python-3.14.7-amd64.exe` | https://www.python.org/ftp/python/3.14.7/python-3.14.7-amd64.exe | `9d9eb2709ef81bf5cd30db3c2096bdbc4ea10087c22e62f27d356b36f6ae9649` |
 | `pycharm-2026.2.3.exe` (build 262.10968.92) | https://download.jetbrains.com/python/pycharm-2026.2.3.exe | `f47b0e48ce06a903b94245bbe8a312f2196205a12264ee47b0cf1595a1443362` |
 
-Both hashes match what python.org and JetBrains publish.
+The hash matches JetBrains' published `pycharm-2026.2.3.exe.sha256`.
 
 ## Build the package
 
-The installers (about 1 GB) and the `.intunewin` are too large for git. The URLs and SHA-256
-hashes are pinned in [`app.json`](app.json), and the repo's build script downloads, checks and
-packages them:
-
 ```sh
-python3 tools/build.py PyCharm-Python
-# -> out/PyCharm-Python/Install.intunewin
+python3 tools/build.py PyCharm
+# -> out/PyCharm/Install.intunewin
 ```
 
 GitHub Actions also builds it whenever a push changes this folder, and publishes it as the
-**PyCharm-Python-2026.2.3-py3.14.7-2** artifact (the `-2` is the package revision). See the [repo README](../../README.md) for both
-options, and for using Microsoft's `IntuneWinAppUtil.exe` instead.
+**PyCharm-2026.2.3** artifact. See the [repo README](../../README.md).
 
 ## Intune app settings
 
@@ -32,42 +29,79 @@ options, and for using Microsoft's `IntuneWinAppUtil.exe` instead.
 |---|---|
 | App type | Windows app (Win32) |
 | Package file | `Install.intunewin` |
-| Name | PyCharm 2026.2.3 with Python 3.14.7 |
-| Publisher | JetBrains / Python Software Foundation |
+| Name | PyCharm 2026.2.3 |
+| Publisher | JetBrains |
 | Install command | `%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Install.ps1` |
 | Uninstall command | `%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Uninstall.ps1` |
 | Install behavior | System |
 | Device restart behavior | Determine behavior based on return codes |
-| Return codes | defaults (0 success, 1707 success, 3010 soft reboot, 1641 hard reboot, 1618 retry) |
+| Return codes | defaults |
 | OS architecture | x64 |
 | Minimum OS | Windows 10 21H2 or later (PyCharm 2026.2 requires 64-bit Windows 10+) |
-| Disk space required | 5,000 MB |
+| Disk space required | 4,000 MB |
 | Detection rules | Custom script: [`Detect.ps1`](Detect.ps1), "Run script as 32-bit process" = **No** |
+| Dependencies | **Python 3.14.7**, set to **Automatically install** |
 
-Installs, uninstalls and per-user changes are logged to
-`C:\ProgramData\Microsoft\IntuneManagementExtension\Logs\` (`PyCharm-2026.2.3-Python-3.14.7-*.log`,
-`Python-3.14.7-*.log`, `PyCharm-2026.2.3-Install.log`), so "Collect diagnostics" picks them up.
+Logs, in `C:\ProgramData\Microsoft\IntuneManagementExtension\Logs\`:
+- `PyCharm-2026.2.3-Install.log` and `PyCharm-2026.2.3-Uninstall.log` from the scripts
+- `PyCharm-2026.2.3-Setup.log` from the PyCharm installer
+
+### Dependency on Python 3.14
+
+1. Add the [Python 3.14](../Python-3.14/) app to Intune first.
+2. In this app, go to **Dependencies → Add** and pick Python 3.14.7.
+3. Set **Automatically install** to **Yes**.
+
+Intune then installs Python before PyCharm, and assigning PyCharm is enough; you don't need
+to assign Python separately. Uninstalling PyCharm leaves Python installed.
+
+If Python is missing when PyCharm installs, the install still succeeds and logs a warning,
+but users don't get Python 3.14 as their default interpreter. Active Setup only runs once per
+user, so installing Python later doesn't fix that. You'd need to bump `$ActiveSetupVersion`
+in `Install.ps1` and redeploy.
+
+A Python patch release (for example 3.14.8) installs to the same `C:\Program Files\Python314`,
+so only the Python app needs updating. Moving to Python 3.15 changes the path, so update both
+apps then.
+
+### Moving from the combined "PyCharm 2026.2.3 with Python 3.14.7" app
+
+Devices that have the earlier combined package already have everything these two apps install.
+To switch without reinstalling anything:
+
+1. Add the Python 3.14.7 and PyCharm 2026.2.3 apps, with the dependency above.
+2. In the PyCharm app, go to **Supersedence → Add**, pick the combined app, and set
+   **Uninstall previous version** to **No**.
+3. Assign the PyCharm app where the combined app was assigned, then remove the combined app's
+   assignments.
+
+On devices with the latest combined package (`-2`, which added the first-run prompt
+handling), both new detection scripts pass, so Intune just marks the apps as installed.
+Devices that still have the very first combined package get PyCharm reinstalled once, which
+picks up the first-run prompt handling. Don't uninstall the combined app: its uninstall
+removes PyCharm and Python.
 
 ## What the install does
 
 [`source/Install.ps1`](source/Install.ps1), running as SYSTEM:
 
-1. **Python 3.14.7**: `python-3.14.7-amd64.exe /quiet InstallAllUsers=1 TargetDir="C:\Program Files\Python314" PrependPath=1 Include_launcher=1 InstallLauncherAllUsers=1 ...`.
-   Python goes on the system PATH and the `py` launcher is installed for everyone.
-2. **PyCharm 2026.2.3**: `pycharm-2026.2.3.exe /S /CONFIG=silent.config /D=C:\Program Files\JetBrains\PyCharm 2026.2.3`.
+1. **PyCharm 2026.2.3**: `pycharm-2026.2.3.exe /S /CONFIG=silent.config /D=C:\Program Files\JetBrains\PyCharm 2026.2.3`.
    [`silent.config`](source/silent.config) sets `mode=admin` (all users) and turns off the desktop
    shortcut, PATH change, context menu entry and `.py` association.
-3. **Firewall**: adds an inbound rule for `bin\pycharm64.exe` (group `PyCharm 2026.2.3`), so
+2. **Firewall**: adds an inbound rule for `bin\pycharm64.exe` (group `PyCharm 2026.2.3`), so
    Windows doesn't ask users whether to let PyCharm through. The rule **blocks** by default.
    PyCharm's own features (debugger, built-in web server) talk over localhost, which Windows
    Firewall doesn't filter, so they still work. Set `$FirewallAction = 'Allow'` in
    `Install.ps1` if users need to reach PyCharm from another computer.
-4. **Per-user defaults, future logons**: copies
+3. **Per-user defaults, future logons**: copies
    [`Set-PyCharmUserDefaults.ps1`](source/Set-PyCharmUserDefaults.ps1) to
    `C:\Program Files\JetBrains\PyCharm-Python-Defaults\` (only admins can write there) and
    registers it with **Active Setup**, so Windows runs it once for each user at their next logon.
-5. **Per-user defaults, now**: runs the same script as SYSTEM against every existing profile
+4. **Per-user defaults, now**: runs the same script as SYSTEM against every existing profile
    under `C:\Users`, so users who are already signed in don't need to log off.
+
+If the script is invoked on a 32-bit PowerShell (which the Intune Management Extension can
+do), it relaunches itself as 64-bit so `Program Files` and `HKLM` aren't redirected.
 
 ## First-run prompts
 
@@ -86,9 +120,6 @@ organization is comfortable with that under its JetBrains licensing terms.
 The registry part needs the user's registry hive. For users who are signed in during install,
 it is loaded under `HKEY_USERS`, and the SYSTEM pass writes there. Everyone else gets it from
 Active Setup at their next logon, before they can start PyCharm.
-
-If the script is invoked on a 32-bit PowerShell (which the Intune Management Extension can
-do), it relaunches itself as 64-bit so `Program Files` and `HKLM` aren't redirected.
 
 ## How the default interpreter is set
 
@@ -132,6 +163,6 @@ details of that import, confirmed in the 2026.2.3 build (`ConfigImportHelper`, `
 ## Uninstall
 
 [`source/Uninstall.ps1`](source/Uninstall.ps1) stops PyCharm, runs `bin\Uninstall.exe /S` and
-waits for it to finish, runs `python-3.14.7-amd64.exe /quiet /uninstall`, then removes the
-firewall rule, the Active Setup entry and the defaults script. It leaves users' own PyCharm settings in `%APPDATA%`
+waits for it to finish, then removes the firewall rule, the Active Setup entry and the defaults
+script. Python 3.14 stays installed, and users' own PyCharm settings in `%APPDATA%` are left
 alone.
