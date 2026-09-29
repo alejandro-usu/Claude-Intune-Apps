@@ -1,7 +1,8 @@
 # PyCharm 2026.2.3 + Python 3.14.7 (Intune Win32 app)
 
 Installs Python 3.14.7 and PyCharm 2026.2.3 for all users, and makes Python 3.14.7 the
-default interpreter in PyCharm for every user on the device.
+default interpreter in PyCharm for every user on the device. Users don't see PyCharm's
+first-run User Agreement or Data Sharing dialogs, or the Windows Firewall prompt.
 
 | Component | Source | SHA-256 |
 |---|---|---|
@@ -22,7 +23,7 @@ python3 tools/build.py PyCharm-Python
 ```
 
 GitHub Actions also builds it whenever a push changes this folder, and publishes it as the
-**PyCharm-Python-2026.2.3-py3.14.7** artifact. See the [repo README](../../README.md) for both
+**PyCharm-Python-2026.2.3-py3.14.7-2** artifact (the `-2` is the package revision). See the [repo README](../../README.md) for both
 options, and for using Microsoft's `IntuneWinAppUtil.exe` instead.
 
 ## Intune app settings
@@ -56,12 +57,35 @@ Installs, uninstalls and per-user changes are logged to
 2. **PyCharm 2026.2.3**: `pycharm-2026.2.3.exe /S /CONFIG=silent.config /D=C:\Program Files\JetBrains\PyCharm 2026.2.3`.
    [`silent.config`](source/silent.config) sets `mode=admin` (all users) and turns off the desktop
    shortcut, PATH change, context menu entry and `.py` association.
-3. **Default interpreter, future logons**: copies
-   [`Set-PyCharmInterpreter.ps1`](source/Set-PyCharmInterpreter.ps1) to
+3. **Firewall**: adds an inbound rule for `bin\pycharm64.exe` (group `PyCharm 2026.2.3`), so
+   Windows doesn't ask users whether to let PyCharm through. The rule **blocks** by default.
+   PyCharm's own features (debugger, built-in web server) talk over localhost, which Windows
+   Firewall doesn't filter, so they still work. Set `$FirewallAction = 'Allow'` in
+   `Install.ps1` if users need to reach PyCharm from another computer.
+4. **Per-user defaults, future logons**: copies
+   [`Set-PyCharmUserDefaults.ps1`](source/Set-PyCharmUserDefaults.ps1) to
    `C:\Program Files\JetBrains\PyCharm-Python-Defaults\` (only admins can write there) and
    registers it with **Active Setup**, so Windows runs it once for each user at their next logon.
-4. **Default interpreter, now**: runs the same script as SYSTEM against every existing profile
+5. **Per-user defaults, now**: runs the same script as SYSTEM against every existing profile
    under `C:\Users`, so users who are already signed in don't need to log off.
+
+## First-run prompts
+
+`Set-PyCharmUserDefaults.ps1` stores the same answers PyCharm saves when a user clicks through
+its first-run dialogs. The locations and formats were confirmed in the 2026.2.3 build
+(`EndUserAgreement`, `ConsentOptions`, `com.intellij.ide.Prefs`).
+
+| Prompt | What the script sets |
+|---|---|
+| JetBrains User Agreement | `HKCU\Software\JavaSoft\Prefs\jetbrains\privacy_policy`, value `eua_accepted_version` = `2.0`. PyCharm 2026.2 ships version 2.0 of the agreement; if a later build ships a newer one, users are asked again until `-AgreementVersion` is updated. |
+| Data Sharing | Adds `rsch.send.usage.stat:1.1:0:<time>` ("Don't Send") to `%APPDATA%\JetBrains\consentOptions\accepted`. All JetBrains IDEs share this file, so an answer the user already gave is left alone. Pass `-UsageStatistics Allow` to opt in instead. |
+
+Accepting the User Agreement this way accepts it on each user's behalf. Make sure your
+organization is comfortable with that under its JetBrains licensing terms.
+
+The registry part needs the user's registry hive. For users who are signed in during install,
+it is loaded under `HKEY_USERS`, and the SYSTEM pass writes there. Everyone else gets it from
+Active Setup at their next logon, before they can start PyCharm.
 
 If the script is invoked on a 32-bit PowerShell (which the Intune Management Extension can
 do), it relaunches itself as 64-bit so `Program Files` and `HKLM` aren't redirected.
@@ -69,7 +93,7 @@ do), it relaunches itself as 64-bit so `Program Files` and `HKLM` aren't redirec
 ## How the default interpreter is set
 
 PyCharm has no machine-wide interpreter setting. Interpreters live in each user's config
-folder, `%APPDATA%\JetBrains\PyCharm2026.2\options\`. `Set-PyCharmInterpreter.ps1` writes
+folder, `%APPDATA%\JetBrains\PyCharm2026.2\options\`. `Set-PyCharmUserDefaults.ps1` writes
 three files there:
 
 | File | What the script sets |
@@ -109,5 +133,5 @@ details of that import, confirmed in the 2026.2.3 build (`ConfigImportHelper`, `
 
 [`source/Uninstall.ps1`](source/Uninstall.ps1) stops PyCharm, runs `bin\Uninstall.exe /S` and
 waits for it to finish, runs `python-3.14.7-amd64.exe /quiet /uninstall`, then removes the
-Active Setup entry and the defaults script. It leaves users' own PyCharm settings in `%APPDATA%`
+firewall rule, the Active Setup entry and the defaults script. It leaves users' own PyCharm settings in `%APPDATA%`
 alone.

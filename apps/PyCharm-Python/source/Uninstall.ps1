@@ -59,7 +59,8 @@ try {
         throw "Python uninstall failed with exit code $($process.ExitCode)"
     }
 
-    # --- Per-user defaults hook ---------------------------------------------------------------
+    # --- Firewall rule and per-user defaults hook ---------------------------------------------
+    Get-NetFirewallRule -Group 'PyCharm 2026.2.3' -ErrorAction SilentlyContinue | Remove-NetFirewallRule
     Remove-Item -Path $ActiveSetupKey -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $DefaultsDir -Recurse -Force -ErrorAction SilentlyContinue
 

@@ -1,10 +1,20 @@
 <#
 .SYNOPSIS
-    Registers Python 3.14 as an interpreter in PyCharm 2026.2 and makes it the default
-    for new projects, for one user profile.
+    Sets PyCharm 2026.2 defaults for one user profile: accepts the JetBrains User Agreement,
+    declines anonymous usage statistics, and makes Python 3.14 the default interpreter.
 
 .DESCRIPTION
-    PyCharm keeps interpreter settings per user, in %APPDATA%\JetBrains\PyCharm2026.2\options:
+    First-run prompts. Both answers are what PyCharm itself saves when the user clicks through:
+
+      User Agreement  HKCU\Software\JavaSoft\Prefs\jetbrains\privacy_policy
+                      value eua_accepted_version = 2.0 (PyCharm 2026.2 ships version 2.0 of the
+                      "eua" document; a newer agreement in a later build prompts again)
+      Data Sharing    %APPDATA%\JetBrains\consentOptions\accepted
+                      rsch.send.usage.stat:1.1:0:<time> (0 = Don't Send). Shared by all JetBrains
+                      IDEs, so an answer the user already gave is left alone.
+
+    Default interpreter. PyCharm keeps interpreter settings per user, in
+    %APPDATA%\JetBrains\PyCharm2026.2\options:
 
       jdk.table.xml        the list of interpreters (SDKs) PyCharm knows about
       project.default.xml  settings for new projects, including their interpreter
@@ -22,21 +32,30 @@
     created here, so the import still runs for everything else.
 
     The same script runs in two ways:
-      - as SYSTEM from Install.ps1, once for each existing profile (-ConfigRoot given)
+      - as SYSTEM from Install.ps1, once for each existing profile (-ConfigRoot given, and
+        -RegistryRoot when that user's registry hive is loaded because they are signed in)
       - as the user from Active Setup at each user's next logon (no parameters)
 
     It is safe to run more than once.
 
 .PARAMETER ConfigRoot
     The user's roaming AppData folder. Defaults to $env:APPDATA.
+
+.PARAMETER RegistryRoot
+    The user's HKEY_CURRENT_USER, as a PowerShell registry path. Defaults to HKCU:. Pass an
+    empty string to skip the User Agreement setting (its registry hive isn't available).
 #>
 [CmdletBinding()]
 param(
     [string]$ConfigRoot = $env:APPDATA,
+    [string]$RegistryRoot = 'HKCU:',
     [string]$PythonExe = "$env:ProgramFiles\Python314\python.exe",
     [string]$PythonVersion = '3.14.7',
     [string]$SdkName = 'Python 3.14',
-    [string]$ConfigDirName = 'PyCharm2026.2'
+    [string]$ConfigDirName = 'PyCharm2026.2',
+    [string]$AgreementVersion = '2.0',
+    [ValidateSet('Decline', 'Allow')]
+    [string]$UsageStatistics = 'Decline'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -117,12 +136,42 @@ function Find-PreviousOptionsFile([string]$JetBrainsDir, [string]$FileName) {
 }
 
 if (-not $ConfigRoot) { throw 'No ConfigRoot given and APPDATA is not set.' }
+$jetBrainsDir = Join-Path $ConfigRoot 'JetBrains'
+
+# --- JetBrains User Agreement ------------------------------------------------------------------
+# PyCharm reads this through java.util.prefs, which keeps a user's preferences under
+# HKCU\Software\JavaSoft\Prefs. Node and value names are all lowercase, so Java stores them as-is.
+if ($RegistryRoot) {
+    $prefsKey = Join-Path $RegistryRoot 'Software\JavaSoft\Prefs\jetbrains\privacy_policy'
+    # Only create the key when missing: New-Item -Force on an existing registry key recreates it,
+    # which would delete what other JetBrains IDEs have stored there.
+    if (-not (Test-Path -LiteralPath $prefsKey)) { New-Item -Path $prefsKey -Force | Out-Null }
+    Set-ItemProperty -Path $prefsKey -Name 'eua_accepted_version' -Value $AgreementVersion
+    Write-Verbose "User Agreement $AgreementVersion marked as accepted in $prefsKey"
+}
+
+# --- Data Sharing (anonymous usage statistics) -------------------------------------------------
+$consentFile = Join-Path $jetBrainsDir 'consentOptions\accepted'
+$usageConsentId = 'rsch.send.usage.stat'
+$consents = @()
+if (Test-Path -LiteralPath $consentFile) {
+    $consents = @((Get-Content -LiteralPath $consentFile -Raw) -split ';' | Where-Object { $_.Trim() })
+}
+if (-not ($consents | Where-Object { $_.StartsWith("${usageConsentId}:") })) {
+    $accepted = if ($UsageStatistics -eq 'Allow') { '1' } else { '0' }
+    $now = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+    $consents += "${usageConsentId}:1.1:${accepted}:$now"
+    New-Item -ItemType Directory -Path (Split-Path -Parent $consentFile) -Force | Out-Null
+    [System.IO.File]::WriteAllText($consentFile, ($consents -join ';'), (New-Object System.Text.UTF8Encoding($false)))
+    Write-Verbose "Usage statistics set to $UsageStatistics in $consentFile"
+}
+
+# --- Default interpreter -----------------------------------------------------------------------
 if (-not (Test-Path -LiteralPath $PythonExe)) {
-    Write-Warning "Python not found at '$PythonExe'; nothing to configure."
+    Write-Warning "Python not found at '$PythonExe'; skipping the default interpreter."
     return
 }
 
-$jetBrainsDir = Join-Path $ConfigRoot 'JetBrains'
 $configDir = Join-Path $jetBrainsDir $ConfigDirName
 $optionsDir = Join-Path $configDir 'options'
 $isFreshConfig = -not ($ConfigMarkers | Where-Object { Test-Path -LiteralPath (Join-Path $configDir $_) })
@@ -209,4 +258,4 @@ if (-not $option) { $option = Add-Element $pySdkSettings 'option' @{ name = 'PRE
 $option.SetAttribute('value', $PythonExe)
 Save-Xml $pySdk $pySdkPath
 
-Write-Output "PyCharm default interpreter set to '$SdkName' ($PythonExe) in $optionsDir"
+Write-Output "PyCharm defaults applied; default interpreter '$SdkName' ($PythonExe) in $optionsDir"

@@ -3,10 +3,11 @@
     Intune custom detection script for PyCharm 2026.2.3 + Python 3.14.7.
 
 .DESCRIPTION
-    Reports "installed" (writes to stdout, exits 0) only when all three are present:
+    Reports "installed" (writes to stdout, exits 0) only when all of these are present:
       - PyCharm 2026.2.3 in C:\Program Files\JetBrains\PyCharm 2026.2.3
       - Python 3.14.7 (64-bit, all users) registered under HKLM\SOFTWARE\Python\PythonCore\3.14
-      - the Active Setup entry that sets Python 3.14 as PyCharm's default interpreter
+      - the Active Setup entry for the per-user defaults, at this package's version
+      - the PyCharm 2026.2.3 firewall rule
 #>
 $programFiles = if ($env:ProgramW6432) { $env:ProgramW6432 } else { $env:ProgramFiles }
 $hklm = [Microsoft.Win32.RegistryKey]::OpenBaseKey('LocalMachine', 'Registry64')
@@ -26,6 +27,10 @@ try {
 
     $activeSetup = $hklm.OpenSubKey('SOFTWARE\Microsoft\Active Setup\Installed Components\PyCharm2026.2-Python3.14-Interpreter')
     if (-not $activeSetup -or -not $activeSetup.GetValue('StubPath')) { exit 1 }
+    # Must match $ActiveSetupVersion in Install.ps1, so devices with an older package reinstall.
+    if ($activeSetup.GetValue('Version') -ne '2026,2,3,2') { exit 1 }
+
+    if (-not (Get-NetFirewallRule -Group 'PyCharm 2026.2.3' -ErrorAction SilentlyContinue)) { exit 1 }
 
     Write-Output "PyCharm 2026.2.3 and Python 3.14.7 detected ($pythonExe)"
     exit 0

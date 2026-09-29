@@ -1,16 +1,20 @@
 <#
 .SYNOPSIS
     Intune Win32 install script: Python 3.14.7 + PyCharm 2026.2.3, with Python 3.14.7 set
-    as PyCharm's default interpreter.
+    as PyCharm's default interpreter and PyCharm's first-run prompts pre-answered.
 
 .DESCRIPTION
     Runs as SYSTEM. Steps:
       1. Install Python 3.14.7 for all users (C:\Program Files\Python314, on PATH, py launcher).
       2. Install PyCharm 2026.2.3 for all users (C:\Program Files\JetBrains\PyCharm 2026.2.3).
-      3. Copy Set-PyCharmInterpreter.ps1 to an admin-only folder and register it with
-         Active Setup, so it runs once for every user at their next logon.
-      4. Run Set-PyCharmInterpreter.ps1 now for every existing user profile, so users who are
-         already signed in get the setting without logging off.
+      3. Add a Windows Firewall rule for pycharm64.exe, so Windows doesn't ask each user
+         whether to let PyCharm through the firewall.
+      4. Copy Set-PyCharmUserDefaults.ps1 to an admin-only folder and register it with
+         Active Setup, so it runs once for every user at their next logon. It accepts the
+         JetBrains User Agreement, declines anonymous usage statistics and sets the default
+         interpreter.
+      5. Run Set-PyCharmUserDefaults.ps1 now for every existing user profile, so users who are
+         already signed in get the settings without logging off.
 
     Log: C:\ProgramData\Microsoft\IntuneManagementExtension\Logs\PyCharm-2026.2.3-Python-3.14.7-Install.log
 #>
@@ -33,10 +37,17 @@ $PyCharmInstaller = Join-Path $PSScriptRoot 'pycharm-2026.2.3.exe'
 $PyCharmDir = Join-Path $env:ProgramFiles 'JetBrains\PyCharm 2026.2.3'
 
 $DefaultsDir = Join-Path $env:ProgramFiles 'JetBrains\PyCharm-Python-Defaults'
-$DefaultsScript = Join-Path $DefaultsDir 'Set-PyCharmInterpreter.ps1'
+$DefaultsScript = Join-Path $DefaultsDir 'Set-PyCharmUserDefaults.ps1'
 $ActiveSetupKey = 'HKLM:\SOFTWARE\Microsoft\Active Setup\Installed Components\PyCharm2026.2-Python3.14-Interpreter'
 # Bump the last field to make Active Setup run again for users who already ran this version.
-$ActiveSetupVersion = '2026,2,3,1'
+$ActiveSetupVersion = '2026,2,3,2'
+
+# Inbound firewall rule for pycharm64.exe. Any rule for the program stops the Windows prompt.
+# Block keeps PyCharm unreachable from other machines; its own features (debugger, built-in web
+# server) talk over localhost, which Windows Firewall doesn't filter. Use 'Allow' instead if
+# users need to reach PyCharm from another computer.
+$FirewallAction = 'Block'
+$FirewallGroup = 'PyCharm 2026.2.3'
 
 $LogDir = Join-Path $env:ProgramData 'Microsoft\IntuneManagementExtension\Logs'
 New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
@@ -82,19 +93,28 @@ try {
         throw "PyCharm install finished but '$PyCharmDir\bin\pycharm64.exe' is missing"
     }
 
-    # --- 3. Per-user default interpreter via Active Setup ------------------------------------
+    # --- 3. Firewall -------------------------------------------------------------------------
+    Get-NetFirewallRule -Group $FirewallGroup -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+    New-NetFirewallRule -DisplayName 'PyCharm 2026.2.3' -Group $FirewallGroup `
+        -Program (Join-Path $PyCharmDir 'bin\pycharm64.exe') -Direction Inbound `
+        -Action $FirewallAction -Profile Any | Out-Null
+    Write-Output "Firewall: inbound $FirewallAction rule added for pycharm64.exe"
+
+    # --- 4. Per-user defaults via Active Setup ------------------------------------------------
     New-Item -ItemType Directory -Path $DefaultsDir -Force | Out-Null
-    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Set-PyCharmInterpreter.ps1') -Destination $DefaultsScript -Force
+    # Remove the script's earlier name from older installs of this package.
+    Remove-Item -LiteralPath (Join-Path $DefaultsDir 'Set-PyCharmInterpreter.ps1') -Force -ErrorAction SilentlyContinue
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Set-PyCharmUserDefaults.ps1') -Destination $DefaultsScript -Force
 
     New-Item -Path $ActiveSetupKey -Force | Out-Null
-    Set-ItemProperty -Path $ActiveSetupKey -Name '(default)' -Value 'PyCharm 2026.2 default Python interpreter'
+    Set-ItemProperty -Path $ActiveSetupKey -Name '(default)' -Value 'PyCharm 2026.2 user defaults'
     Set-ItemProperty -Path $ActiveSetupKey -Name 'StubPath' -Value (
         "`"$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe`" -NoProfile -NonInteractive " +
         "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$DefaultsScript`"")
     Set-ItemProperty -Path $ActiveSetupKey -Name 'Version' -Value $ActiveSetupVersion
     Set-ItemProperty -Path $ActiveSetupKey -Name 'IsInstalled' -Value 1 -Type DWord
 
-    # --- 4. Existing profiles, now -----------------------------------------------------------
+    # --- 5. Existing profiles, now -----------------------------------------------------------
     $profileList = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList'
     foreach ($entry in Get-ChildItem -Path $profileList) {
         # Local/domain accounts (S-1-5-21-*) and Entra ID accounts (S-1-12-1-*).
@@ -103,8 +123,12 @@ try {
         if (-not $profilePath) { continue }
         $roaming = Join-Path ([Environment]::ExpandEnvironmentVariables($profilePath)) 'AppData\Roaming'
         if (-not (Test-Path -LiteralPath $roaming)) { continue }
+        # A signed-in user's registry hive is loaded under HKEY_USERS. For anyone else, Active
+        # Setup sets the registry part at their next logon.
+        $hive = "Registry::HKEY_USERS\$($entry.PSChildName)"
+        $registryRoot = if (Test-Path -LiteralPath $hive) { $hive } else { '' }
         try {
-            & $DefaultsScript -ConfigRoot $roaming -PythonExe $PythonExe -PythonVersion $PythonVersion
+            & $DefaultsScript -ConfigRoot $roaming -RegistryRoot $registryRoot -PythonExe $PythonExe -PythonVersion $PythonVersion
         } catch {
             Write-Warning "Could not configure PyCharm for '$profilePath': $($_.Exception.Message)"
         }
