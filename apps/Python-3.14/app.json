@@ -1,7 +1,7 @@
 {
   "name": "Python 3.14.7",
   "version": "3.14.7",
-  "setupFile": "Install.ps1",
+  "setupFile": "python-3.14.7-amd64.exe",
   "downloads": [
     {
       "url": "https://www.python.org/ftp/python/3.14.7/python-3.14.7-amd64.exe",

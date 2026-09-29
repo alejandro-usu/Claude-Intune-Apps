@@ -30,7 +30,6 @@ if ([Environment]::Is64BitOperatingSystem -and -not [Environment]::Is64BitProces
 }
 
 # Installed by the Python 3.14 app. Patch releases keep this path.
-$PythonVersion = '3.14.7'
 $PythonExe = Join-Path $env:ProgramFiles 'Python314\python.exe'
 
 $PyCharmInstaller = Join-Path $PSScriptRoot 'pycharm-2026.2.3.exe'
@@ -53,17 +52,6 @@ $LogDir = Join-Path $env:ProgramData 'Microsoft\IntuneManagementExtension\Logs'
 New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
 Start-Transcript -Path (Join-Path $LogDir 'PyCharm-2026.2.3-Install.log') -Append | Out-Null
 
-function Invoke-Installer([string]$FilePath, [string]$Arguments, [int[]]$SuccessCodes = @(0)) {
-    # Write-Host, not Write-Output: this function's output is its exit code. The transcript still logs it.
-    Write-Host "Running: `"$FilePath`" $Arguments"
-    $process = Start-Process -FilePath $FilePath -ArgumentList $Arguments -Wait -PassThru -WindowStyle Hidden
-    Write-Host "Exit code: $($process.ExitCode)"
-    if ($SuccessCodes -notcontains $process.ExitCode) {
-        throw "'$FilePath' failed with exit code $($process.ExitCode)"
-    }
-    return $process.ExitCode
-}
-
 $exitCode = 0
 try {
     # The dependency rule should have installed Python first. Without it, PyCharm still
@@ -76,7 +64,10 @@ try {
     # NSIS rule: /D= must come last and must not be quoted, even when the path has spaces.
     $pycharmArgs = "/S /CONFIG=`"$(Join-Path $PSScriptRoot 'silent.config')`" " +
         "/LOG=`"$(Join-Path $LogDir 'PyCharm-2026.2.3-Setup.log')`" /D=$PyCharmDir"
-    [void](Invoke-Installer $PyCharmInstaller $pycharmArgs)
+    Write-Output "Running: `"$PyCharmInstaller`" $pycharmArgs"
+    $process = Start-Process -FilePath $PyCharmInstaller -ArgumentList $pycharmArgs -Wait -PassThru -WindowStyle Hidden
+    Write-Output "Exit code: $($process.ExitCode)"
+    if ($process.ExitCode -ne 0) { throw "PyCharm install failed with exit code $($process.ExitCode)" }
     if (-not (Test-Path -LiteralPath (Join-Path $PyCharmDir 'bin\pycharm64.exe'))) {
         throw "PyCharm install finished but '$PyCharmDir\bin\pycharm64.exe' is missing"
     }
@@ -90,8 +81,6 @@ try {
 
     # --- 3. Per-user defaults via Active Setup ------------------------------------------------
     New-Item -ItemType Directory -Path $DefaultsDir -Force | Out-Null
-    # Remove the script's earlier name from older installs of this package.
-    Remove-Item -LiteralPath (Join-Path $DefaultsDir 'Set-PyCharmInterpreter.ps1') -Force -ErrorAction SilentlyContinue
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Set-PyCharmUserDefaults.ps1') -Destination $DefaultsScript -Force
 
     New-Item -Path $ActiveSetupKey -Force | Out-Null
@@ -116,7 +105,7 @@ try {
         $hive = "Registry::HKEY_USERS\$($entry.PSChildName)"
         $registryRoot = if (Test-Path -LiteralPath $hive) { $hive } else { '' }
         try {
-            & $DefaultsScript -ConfigRoot $roaming -RegistryRoot $registryRoot -PythonExe $PythonExe -PythonVersion $PythonVersion
+            & $DefaultsScript -ConfigRoot $roaming -RegistryRoot $registryRoot
         } catch {
             Write-Warning "Could not configure PyCharm for '$profilePath': $($_.Exception.Message)"
         }

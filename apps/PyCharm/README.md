@@ -76,7 +76,7 @@ To switch without reinstalling anything:
    assignments.
 
 On devices with the latest combined package (`-2`, which added the first-run prompt
-handling), both new detection scripts pass, so Intune just marks the apps as installed.
+handling), both new detection rules pass, so Intune just marks the apps as installed.
 Devices that still have the very first combined package get PyCharm reinstalled once, which
 picks up the first-run prompt handling. Don't uninstall the combined app: its uninstall
 removes PyCharm and Python.
