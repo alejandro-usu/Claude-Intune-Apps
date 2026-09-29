@@ -1,0 +1,6 @@
+# Installers and built packages are too large for git; build.py recreates them.
+*.exe
+*.intunewin
+*.part
+output/
+__pycache__/
