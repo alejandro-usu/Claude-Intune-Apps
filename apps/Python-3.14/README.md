@@ -78,6 +78,26 @@ Patch releases install over this one in the same folder, so apps that point at
    commands and detection rule.
 3. Set it to supersede this app, with **Uninstall previous version** set to **No**.
 
+## Future: Python 3.16 and the install manager
+
+Checked September 2026 against [PEP 773](https://peps.python.org/pep-0773/) and the
+[Python 3.14 Windows docs](https://docs.python.org/3.14/using/windows.html):
+
+- The installer this app uses is deprecated since 3.14 and "will not be produced for Python
+  3.16 or later". Python 3.15 still ships it (3.15.0rc2 has `python-3.15.0rc2-amd64.exe`).
+- Its replacement, the Python install manager (`py install`), "does not support installing
+  runtimes per-machine". It installs Python separately for each signed-in user. The docs
+  suggest emulating a per-machine install by running `py install --target=<shared location>`
+  as an administrator and adding PATH, registry and Start menu entries yourself.
+- The `py` launcher this app installs (`Include_launcher=1`) is deprecated too; the install
+  manager replaces it.
+
+So this app can stay as it is through Python 3.15. For 3.16, it will likely become a scripted
+app: install the install manager, run `py install --target="C:\Program Files\Python316"` as
+SYSTEM, and add PATH and detection by hand. Keeping a fixed path means
+[PyCharm](../PyCharm/)'s default-interpreter setup keeps working. Check the docs again before
+then, since machine-wide support may improve.
+
 ## Uninstall
 
 The uninstall command runs the same installer with `/uninstall`. Packages installed with pip
