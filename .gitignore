@@ -4,3 +4,4 @@
 *.part
 output/
 __pycache__/
+*.zip
