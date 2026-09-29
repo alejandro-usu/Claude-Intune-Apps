@@ -1,0 +1,10 @@
+# Build output and downloaded installers are too large for git; tools/build.py recreates them.
+/out/
+/.cache/
+*.intunewin
+*.exe
+*.msi
+*.msix
+*.part
+*.zip
+__pycache__/

@@ -1,0 +1,163 @@
+#!/usr/bin/env python3
+"""Build Intune Win32 packages for the apps in apps/.
+
+Each app folder has an app.json manifest:
+
+    {
+      "name": "Display name",
+      "version": "1.2.3",
+      "setupFile": "Install.ps1",          file in source/ that Intune runs
+      "downloads": [                        installers to fetch into the package
+        {"url": "https://...", "sha256": "...", "file": "optional-name.exe"}
+      ]
+    }
+
+For each app, this script:
+  1. downloads every file in "downloads" into .cache/downloads/ (reused on later runs)
+     and stops if a SHA-256 doesn't match
+  2. stages source/ plus the downloads in out/<app>/staging/
+  3. writes out/<app>/<setupFile stem>.intunewin and verifies it
+
+Usage:
+    python3 tools/build.py PyCharm-Python      build one app (folder name under apps/)
+    python3 tools/build.py --all               build every app
+    python3 tools/build.py --list              list apps and versions
+    python3 tools/build.py --check             validate every manifest, download nothing
+"""
+import argparse
+import hashlib
+import json
+import os
+import re
+import shutil
+import sys
+import urllib.request
+
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+APPS = os.path.join(REPO, "apps")
+CACHE = os.path.join(REPO, ".cache", "downloads")
+OUT = os.path.join(REPO, "out")
+CHUNK = 4 * 1024 * 1024
+
+sys.path.insert(0, os.path.join(REPO, "tools"))
+import intunewin  # noqa: E402
+
+
+def app_names():
+    return sorted(d for d in os.listdir(APPS)
+                  if not d.startswith(("_", ".")) and os.path.isfile(os.path.join(APPS, d, "app.json")))
+
+
+def load_manifest(app):
+    """Read and validate apps/<app>/app.json. Returns the manifest; exits with a message on error."""
+    app_dir = os.path.join(APPS, app)
+    path = os.path.join(app_dir, "app.json")
+    if not os.path.isfile(path):
+        sys.exit(f"{app}: no app.json (known apps: {', '.join(app_names())})")
+    with open(path, encoding="utf-8") as f:
+        manifest = json.load(f)
+
+    errors = []
+    for key in ("name", "version", "setupFile"):
+        if not isinstance(manifest.get(key), str) or not manifest[key]:
+            errors.append(f'"{key}" must be a non-empty string')
+    setup = manifest.get("setupFile")
+    if isinstance(setup, str) and not os.path.isfile(os.path.join(app_dir, "source", setup)):
+        errors.append(f'setupFile "{setup}" is not in source/')
+    names = set()
+    for i, dl in enumerate(manifest.get("downloads", [])):
+        if not str(dl.get("url", "")).startswith("https://"):
+            errors.append(f"downloads[{i}].url must be an https URL")
+        if not re.fullmatch(r"[0-9a-f]{64}", str(dl.get("sha256", ""))):
+            errors.append(f"downloads[{i}].sha256 must be 64 lowercase hex characters")
+        name = download_name(dl)
+        if name in names or os.path.exists(os.path.join(app_dir, "source", name)):
+            errors.append(f"downloads[{i}] file name '{name}' clashes with another file")
+        names.add(name)
+    if "<" in json.dumps(manifest) or "0" * 64 in json.dumps(manifest):
+        errors.append("still has template placeholders (<...> or an all-zero sha256)")
+    if errors:
+        sys.exit(f"{app}/app.json:\n  " + "\n  ".join(errors))
+    return manifest
+
+
+def download_name(dl):
+    return dl.get("file") or str(dl.get("url", "")).rsplit("/", 1)[-1]
+
+
+def sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(CHUNK), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def fetch(dl):
+    """Return the path of the cached, hash-checked download."""
+    os.makedirs(CACHE, exist_ok=True)
+    # Key the cache by hash, so two apps can use different files with the same name.
+    path = os.path.join(CACHE, f"{dl['sha256'][:12]}-{download_name(dl)}")
+    if os.path.isfile(path) and sha256(path) == dl["sha256"]:
+        print(f"  have {download_name(dl)} (hash OK)")
+        return path
+
+    print(f"  downloading {dl['url']}")
+    part = path + ".part"
+    with urllib.request.urlopen(dl["url"]) as response, open(part, "wb") as f:
+        shutil.copyfileobj(response, f, CHUNK)
+    actual = sha256(part)
+    if actual != dl["sha256"]:
+        os.remove(part)
+        sys.exit(f"SHA-256 mismatch for {dl['url']}\n  expected {dl['sha256']}\n  got      {actual}")
+    os.replace(part, path)
+    print(f"  downloaded {download_name(dl)} (hash OK)")
+    return path
+
+
+def link_or_copy(src, dst):
+    try:
+        os.link(src, dst)
+    except OSError:
+        shutil.copy2(src, dst)
+
+
+def build(app):
+    manifest = load_manifest(app)
+    print(f"== {app}: {manifest['name']} ({manifest['version']})")
+    app_out = os.path.join(OUT, app)
+    staging = os.path.join(app_out, "staging")
+    shutil.rmtree(app_out, ignore_errors=True)
+    shutil.copytree(os.path.join(APPS, app, "source"), staging)
+    for dl in manifest.get("downloads", []):
+        link_or_copy(fetch(dl), os.path.join(staging, download_name(dl)))
+
+    package = intunewin.pack(staging, manifest["setupFile"], app_out)
+    intunewin.verify(package)
+    shutil.rmtree(staging)
+    return package
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("apps", nargs="*", help="app folder names under apps/")
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--all", action="store_true", help="build every app")
+    group.add_argument("--list", action="store_true", help="list apps and versions")
+    group.add_argument("--check", action="store_true", help="validate manifests only")
+    args = parser.parse_args()
+
+    if args.list or args.check:
+        for app in app_names():
+            manifest = load_manifest(app)
+            print(f"{app}\t{manifest['version']}\t{manifest['name']}")
+        return
+    apps = app_names() if args.all else args.apps
+    if not apps:
+        parser.error("name an app, or pass --all / --list / --check")
+    for app in apps:
+        build(app)
+
+
+if __name__ == "__main__":
+    main()

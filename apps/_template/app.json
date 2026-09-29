@@ -1,0 +1,11 @@
+{
+  "name": "<APP NAME> <VERSION>",
+  "version": "<VERSION>",
+  "setupFile": "Install.ps1",
+  "downloads": [
+    {
+      "url": "https://vendor.example.com/downloads/example-<VERSION>-x64.msi",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ]
+}
