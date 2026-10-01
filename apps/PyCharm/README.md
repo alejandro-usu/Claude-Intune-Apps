@@ -143,6 +143,36 @@ details of that import, confirmed in the 2026.2.3 build (`ConfigImportHelper`, `
 - Existing projects keep whatever interpreter they already use. The default only applies to
   new projects.
 
+## Python packages for projects
+
+Neither this app nor the Python app installs extra packages (numpy, pandas and so on). Users
+install what they need into each project. By default, PyCharm's New Project wizard creates a
+virtual environment (`.venv`) for each project, and packages go there, so no admin rights are
+needed. Packages in the system Python wouldn't be visible inside these environments anyway.
+
+In PyCharm, open the project, open the **Terminal** tab (it starts with the project's
+environment active), and run, for example:
+
+```
+python -m pip install numpy matplotlib pandas scipy dataretrieval
+```
+
+Other ways to do the same:
+- **Python Packages** tool window (**View → Tool Windows → Python Packages**): search for a
+  package and click **Install**.
+- A `requirements.txt` in the project folder, one package per line. PyCharm offers to install
+  everything in it, or run `python -m pip install -r requirements.txt`. Instructors can hand
+  out one file so every student gets the same set.
+- From a regular Command Prompt in the project folder:
+  `.venv\Scripts\python -m pip install <packages>`
+
+Notes:
+- The device needs internet access to reach PyPI.
+- Running pip against the system Python (`C:\Program Files\Python314`) fails with a permission
+  error for standard users. That's expected; install into the project instead.
+- Projects created with PyCharm's **uv** option may not include pip. Use
+  `uv pip install <packages>` there.
+
 ## Uninstall
 
 [`source/Uninstall.ps1`](source/Uninstall.ps1) stops PyCharm, runs `bin\Uninstall.exe /S` and
